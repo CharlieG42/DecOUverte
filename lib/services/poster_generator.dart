@@ -7,23 +7,26 @@ import '../constants.dart';
 import '../models/event_data.dart';
 import '../utils/formatters.dart';
 import 'qr_generator.dart';
+import 'template_renderer.dart';
 
 class PosterGenerator {
   PosterGenerator._();
 
-  /// Génère le PDF de l'affiche A4 portrait et le sauvegarde sur disque.
-  /// Retourne le chemin du fichier PDF créé.
+  /// Génère le PDF de l'affiche A4 portrait :
+  /// 1. Rend le template vierge en image haute résolution
+  /// 2. L'utilise comme fond pleine page
+  /// 3. Overlay les 7 zones éditables + QR code
   static Future<String> generate(EventData event, String outputDir) async {
     final pdf = pw.Document();
 
-    final logoBytes = await _loadAsset(AppConstants.assetLogo);
-    final bgBytes = await _loadAsset(AppConstants.assetBackground);
-    final compassBytes = await _loadAsset(AppConstants.assetCompass);
+    // Rendu du template en image
+    final templateBytes = await TemplateRenderer.renderTemplatePng(dpi: 300);
 
-    final comfortaaBold = await _loadFont('fonts/Comfortaa-Bold.ttf');
+    // Polices pour l'overlay
     final nunitoBold = await _loadFont('fonts/Nunito-Bold.ttf');
     final nunitoRegular = await _loadFont('fonts/Nunito-Regular.ttf');
 
+    // QR code
     final qrBytes = await QrGenerator.generatePng(
       Formatters.normalizeUrl(event.registrationUrl),
     );
@@ -36,162 +39,91 @@ class PosterGenerator {
         pageFormat: PdfPageFormat(pageWidth, pageHeight, marginAll: 0),
         build: (context) => pw.Stack(
           children: [
-            // Fond dégradé
-            pw.Container(
-              width: pageWidth,
-              height: pageHeight,
-              decoration: pw.BoxDecoration(
-                gradient: pw.LinearGradient(
-                  begin: pw.Alignment.topCenter,
-                  end: pw.Alignment.bottomCenter,
-                  colors: [
-                    PdfColor.fromInt(AppConstants.bgTop.value),
-                    PdfColor.fromInt(AppConstants.bgBottom.value),
-                  ],
-                ),
+            // ── Fond : image du template vierge, pleine page ──
+            pw.Positioned(
+              top: 0,
+              left: 0,
+              child: pw.Image(
+                pw.MemoryImage(templateBytes),
+                width: pageWidth,
+                height: pageHeight,
+                fit: pw.BoxFit.fill,
               ),
             ),
-            // Image de fond (silhouettes)
-            pw.Positioned(
-              top: pageHeight * 0.15,
-              left: 0,
-              right: 0,
-              child: pw.Center(
-                child: pw.Image(
-                  pw.MemoryImage(bgBytes),
-                  width: pageWidth * 0.8,
-                  height: pageHeight * 0.25,
-                  fit: pw.BoxFit.contain,
+
+            // ── Date (bandeau bleu) ──
+            _overlayZone(
+              AppConstants.dateZone,
+              pageWidth,
+              pageHeight,
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                decoration: pw.BoxDecoration(
+                  color: PdfColor.fromInt(AppConstants.blueLogo.value),
+                  borderRadius: pw.BorderRadius.circular(8),
                 ),
-              ),
-            ),
-            // Logo
-            pw.Positioned(
-              top: 20,
-              left: 0,
-              right: 0,
-              child: pw.Center(
-                child: pw.Image(
-                  pw.MemoryImage(logoBytes),
-                  width: pageWidth * 0.35,
-                  height: 120,
-                  fit: pw.BoxFit.contain,
-                ),
-              ),
-            ),
-            // Boussole
-            pw.Positioned(
-              top: pageHeight * 0.40,
-              left: 0,
-              right: 0,
-              child: pw.Center(
-                child: pw.Image(
-                  pw.MemoryImage(compassBytes),
-                  width: pageWidth * 0.25,
-                  height: pageWidth * 0.25,
-                  fit: pw.BoxFit.contain,
-                ),
-              ),
-            ),
-            // Titre
-            pw.Positioned(
-              top: pageHeight * 0.32,
-              left: 0,
-              right: 0,
-              child: pw.Center(
                 child: pw.Text(
-                  AppConstants.titleText,
-                  style: pw.TextStyle(
-                    font: comfortaaBold,
-                    fontSize: 48,
-                    color: PdfColor.fromInt(AppConstants.black.value),
-                  ),
-                ),
-              ),
-            ),
-            // Accroche
-            pw.Positioned(
-              top: pageHeight * 0.38,
-              left: pageWidth * 0.1,
-              right: pageWidth * 0.1,
-              child: pw.Center(
-                child: pw.Text(
-                  AppConstants.subtitleText,
-                  textAlign: pw.TextAlign.center,
+                  '> ${Formatters.formatDate(event.date)} >',
                   style: pw.TextStyle(
                     font: nunitoBold,
-                    fontSize: 11,
-                    color: PdfColor.fromInt(AppConstants.black.value),
+                    fontSize: 22,
+                    color: PdfColors.white,
                   ),
                 ),
               ),
+              align: pw.TextAlign.center,
             ),
-            // Date
-            pw.Positioned(
-              top: pageHeight * 0.55,
-              left: 0,
-              right: 0,
-              child: pw.Center(
-                child: pw.Container(
-                  padding: const pw.EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  decoration: pw.BoxDecoration(
-                    color: PdfColor.fromInt(AppConstants.blueLogo.value),
-                    borderRadius: pw.BorderRadius.circular(8),
-                  ),
-                  child: pw.Text(
-                    '> ${Formatters.formatDate(event.date)} >',
-                    style: pw.TextStyle(
-                      font: nunitoBold,
-                      fontSize: 22,
-                      color: PdfColors.white,
-                    ),
-                  ),
-                ),
-              ),
+
+            // ── Lieu ──
+            _overlayText(
+              AppConstants.locationZone,
+              pageWidth,
+              pageHeight,
+              event.location,
+              nunitoBold,
+              18,
+              AppConstants.black,
             ),
-            // Lieu
-            pw.Positioned(
-              top: pageHeight * 0.60,
-              left: 0,
-              right: 0,
-              child: pw.Center(
-                child: pw.Text(
-                  event.location,
-                  style: pw.TextStyle(
-                    font: nunitoBold,
-                    fontSize: 18,
-                    color: PdfColor.fromInt(AppConstants.black.value),
-                  ),
-                ),
-              ),
+
+            // ── Type d'événement ──
+            _overlayText(
+              AppConstants.eventTypeZone,
+              pageWidth,
+              pageHeight,
+              event.eventType,
+              nunitoBold,
+              13,
+              AppConstants.black,
             ),
-            // Infos
-            pw.Positioned(
-              top: pageHeight * 0.66,
-              left: pageWidth * 0.08,
-              right: pageWidth * 0.08,
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.center,
-                children: [
-                  pw.Text(event.eventType,
-                      textAlign: pw.TextAlign.center,
-                      style: pw.TextStyle(font: nunitoBold, fontSize: 13)),
-                  pw.SizedBox(height: 6),
-                  pw.Text(event.audience,
-                      textAlign: pw.TextAlign.center,
-                      style: pw.TextStyle(font: nunitoBold, fontSize: 13)),
-                  pw.SizedBox(height: 6),
-                  pw.Text(event.timeSlotText,
-                      textAlign: pw.TextAlign.center,
-                      style: pw.TextStyle(font: nunitoRegular, fontSize: 13)),
-                ],
-              ),
+
+            // ── Public concerné ──
+            _overlayText(
+              AppConstants.audienceZone,
+              pageWidth,
+              pageHeight,
+              event.audience,
+              nunitoBold,
+              13,
+              AppConstants.black,
             ),
-            // Inscription + téléphones
-            pw.Positioned(
-              bottom: 40,
-              left: pageWidth * 0.08,
-              child: pw.Column(
+
+            // ── Créneau horaire ──
+            _overlayText(
+              AppConstants.timeSlotZone,
+              pageWidth,
+              pageHeight,
+              event.timeSlotText,
+              nunitoRegular,
+              13,
+              AppConstants.black,
+            ),
+
+            // ── Inscription (bas gauche) ──
+            _overlayZone(
+              AppConstants.registrationZone,
+              pageWidth,
+              pageHeight,
+              pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
                   pw.Text('Inscription conseillée sur',
@@ -201,28 +133,46 @@ class PosterGenerator {
                           font: nunitoBold,
                           fontSize: 12,
                           color: PdfColor.fromInt(AppConstants.blueLogo.value))),
-                  pw.SizedBox(height: 8),
+                ],
+              ),
+              align: pw.TextAlign.left,
+            ),
+
+            // ── Téléphones (bas gauche, sous inscription) ──
+            _overlayZone(
+              AppConstants.phoneZone,
+              pageWidth,
+              pageHeight,
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
                   pw.Text('Informations au',
                       style: pw.TextStyle(font: nunitoRegular, fontSize: 10)),
                   pw.Text(event.phoneText,
                       style: pw.TextStyle(font: nunitoBold, fontSize: 11)),
                 ],
               ),
+              align: pw.TextAlign.left,
             ),
-            // QR code
-            pw.Positioned(
-              bottom: 40,
-              right: pageWidth * 0.08,
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.center,
-                children: [
-                  pw.Image(pw.MemoryImage(qrBytes), width: 80, height: 80),
-                  pw.SizedBox(height: 6),
-                  pw.Text(AppConstants.scanText,
-                      textAlign: pw.TextAlign.center,
-                      style: pw.TextStyle(font: nunitoRegular, fontSize: 9)),
-                ],
-              ),
+
+            // ── QR code (bas droite) ──
+            _overlayZone(
+              AppConstants.qrZone,
+              pageWidth,
+              pageHeight,
+              pw.Image(pw.MemoryImage(qrBytes), width: 80, height: 80),
+              align: pw.TextAlign.center,
+            ),
+
+            // ── Texte "Scannez…" (sous QR) ──
+            _overlayText(
+              AppConstants.scanTextZone,
+              pageWidth,
+              pageHeight,
+              AppConstants.scanText,
+              nunitoRegular,
+              9,
+              AppConstants.black,
             ),
           ],
         ),
@@ -238,9 +188,82 @@ class PosterGenerator {
     return outputPath;
   }
 
-  static Future<Uint8List> _loadAsset(String path) async {
-    final byteData = await rootBundle.load(path);
-    return byteData.buffer.asUint8List();
+  /// Positionne un widget à une zone donnée.
+  static pw.Positioned _overlayZone(
+    Zone zone,
+    double pageW,
+    double pageH,
+    pw.Widget child, {
+    pw.TextAlign align = pw.TextAlign.center,
+  }) {
+    final x = _zoneX(zone, pageW);
+    final y = zone.topY * pageH / 100;
+    final w = zone.widthPct * pageW / 100;
+
+    return pw.Positioned(
+      top: y,
+      left: x,
+      width: w,
+      child: child,
+    );
+  }
+
+  /// Positionne un texte à une zone donnée.
+  static pw.Positioned _overlayText(
+    Zone zone,
+    double pageW,
+    double pageH,
+    String text,
+    pw.Font font,
+    double fontSize,
+    Color color, {
+    pw.TextAlign textAlign = pw.TextAlign.center,
+  }) {
+    final x = _zoneX(zone, pageW);
+    final y = zone.topY * pageH / 100;
+    final w = zone.widthPct * pageW / 100;
+
+    pw.TextAlign align;
+    switch (zone.align) {
+      case ZoneAlign.left:
+        align = pw.TextAlign.left;
+        break;
+      case ZoneAlign.right:
+        align = pw.TextAlign.right;
+        break;
+      case ZoneAlign.center:
+        align = pw.TextAlign.center;
+        break;
+    }
+
+    return pw.Positioned(
+      top: y,
+      left: x,
+      width: w,
+      child: pw.Text(
+        text,
+        textAlign: align,
+        style: pw.TextStyle(
+          font: font,
+          fontSize: fontSize,
+          color: PdfColor.fromInt(color.value),
+        ),
+      ),
+    );
+  }
+
+  /// Calcule la position X (bord gauche) selon le type d'alignement de la zone.
+  static double _zoneX(Zone zone, double pageW) {
+    switch (zone.align) {
+      case ZoneAlign.center:
+        final centerX = zone.centerX ?? 50;
+        return (centerX - zone.widthPct / 2) * pageW / 100;
+      case ZoneAlign.left:
+        return (zone.leftX ?? 0) * pageW / 100;
+      case ZoneAlign.right:
+        final rightX = zone.rightX ?? 100;
+        return (rightX - zone.widthPct) * pageW / 100;
+    }
   }
 
   static Future<pw.Font> _loadFont(String path) async {
